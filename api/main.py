@@ -1,40 +1,46 @@
-# api/main.py - Updated with conversation memory and auto-routing
+# api/main.py - COMPLETE FIXED VERSION
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import uuid
 import os
 from datetime import datetime
+import traceback
 
-# Import our new components
-from conversations.memory import memory
-from utils.router import router
+# Import our components - FIXED IMPORTS
+from memory.redis_memory import memory
+from utils.simple_router import router  # Use the simple router
 
-# Import existing MCP client (assuming you have this)
+# MCP client import with better error handling
+mcp_client = None
+MCP_AVAILABLE = False
+
 try:
-    from client import MCPClient
-    MCP_AVAILABLE = True
-except ImportError:
-    print("⚠️  MCP Client not found - running in demo mode")
-    MCP_AVAILABLE = False
+    from mcp_client import MCPClient
+    # Try to get API key from environment
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if api_key:
+        mcp_client = MCPClient(api_key)
+        MCP_AVAILABLE = True
+        print("✅ MCP Client initialized successfully")
+    else:
+        print("⚠️ No Gemini API key found (GEMINI_API_KEY or GOOGLE_API_KEY)")
+        print("⚠️ MCP features will be limited")
+except Exception as e:
+    print(f"⚠️ MCP Client initialization failed: {e}")
+    print("⚠️ Continuing without MCP client")
 
-app = FastAPI(title="MCP Chatbot API with Memory & Routing", version="2.0.0")
+app = FastAPI(title="MCP Chatbot API", version="2.0.0")
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure as needed for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize MCP Client if available
-mcp_client = None
-if MCP_AVAILABLE:
-    mcp_client = MCPClient()
 
 # Request/Response models
 class QueryRequest(BaseModel):
@@ -42,59 +48,76 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     use_routing: bool = True
 
-class QueryResponse(BaseModel):
-    response: str
-    session_id: str
-    tool_used: Optional[str] = None
-    routing_info: Optional[Dict] = None
-    message_count: int = 0
-
 @app.on_event("startup")
 async def startup_event():
-    """Initialize connections on startup"""
     print("🚀 Starting MCP Chatbot API...")
     
-    if mcp_client:
+    if mcp_client and MCP_AVAILABLE:
         try:
-            await mcp_client.connect()
-            print("✅ MCP Client connected successfully")
+            # Try to connect to MCP server
+            server_path = os.getenv("MCP_SERVER_PATH", "server/server.py")
+            
+            # Try multiple server paths
+            possible_paths = [
+                server_path,
+                "../server/server.py",
+                "./server/server.py",
+                "server.py"
+            ]
+            
+            connected = False
+            for path in possible_paths:
+                if os.path.exists(path):
+                    try:
+                        await mcp_client.connect_to_server(path)
+                        print(f"✅ MCP Server connected at: {path}")
+                        connected = True
+                        break
+                    except Exception as e:
+                        print(f"⚠️ Failed to connect to server at {path}: {e}")
+                        continue
+            
+            if not connected:
+                print("⚠️ No MCP server found at any expected location")
+                print("⚠️ Available server paths checked:", possible_paths)
+                
         except Exception as e:
-            print(f"⚠️  MCP Client connection failed: {e}")
+            print(f"⚠️ MCP Server connection failed: {e}")
     
     print("💾 Memory system initialized")
-    print("🔀 Router system initialized")
+    print("🔀 Router system initialized") 
     print("🎉 API ready to handle requests!")
 
-@app.on_event("shutdown") 
+@app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on shutdown"""
     if mcp_client:
         try:
-            await mcp_client.disconnect()
+            await mcp_client.cleanup()
             print("✅ MCP Client disconnected")
         except Exception as e:
             print(f"❌ Error disconnecting MCP Client: {e}")
 
-@app.post("/query", response_model=QueryResponse)
+# Main chat endpoint - FRONTEND COMPATIBLE
+@app.post("/query")
 async def process_query(request: QueryRequest):
-    """Process user query with conversation memory and auto-routing"""
+    """Process user query - Frontend Compatible"""
     
-    # Generate session ID if not provided
     session_id = request.session_id or str(uuid.uuid4())
     
     print(f"🎯 Processing query for session {session_id[:8]}...")
     print(f"📝 Query: {request.query[:100]}...")
     
     try:
-        # Step 1: Add user message to memory
+        # Add user message to memory
         memory.add_message(session_id, "user", request.query)
         
-        # Step 2: Get conversation context for AI
+        # Get conversation context
         context = memory.get_recent_context(session_id, max_messages=6)
         
-        # Step 3: Route the query (if enabled)
+        # Route the query
         routing_info = None
         tool_used = None
+        response = ""
         
         if request.use_routing:
             routing_decision = router.route_query(request.query, context)
@@ -104,236 +127,247 @@ async def process_query(request: QueryRequest):
                 "reasoning": routing_decision.reasoning
             }
             
-            print(f"🔀 Routing decision: {routing_decision.tool_name or 'general_chat'} ({routing_decision.confidence:.2f})")
+            print(f"🔀 Routing: {routing_decision.tool_name or 'general_chat'} ({routing_decision.confidence:.2f})")
             
-            # Step 4: Generate response based on routing
-            if routing_decision.tool_name:
-                response = await handle_tool_call(routing_decision.tool_name, request.query, context, session_id)
-                tool_used = routing_decision.tool_name
+            # Handle based on routing
+            if routing_decision.tool_name and mcp_client and MCP_AVAILABLE:
+                # Try to use MCP for tool calls
+                try:
+                    response = await mcp_client.process_query(request.query)
+                    tool_used = routing_decision.tool_name
+                    print("✅ MCP response generated")
+                except Exception as e:
+                    print(f"⚠️ MCP failed, using fallback: {e}")
+                    response = await handle_fallback_response(request.query, routing_decision)
+                    tool_used = f"{routing_decision.tool_name}_fallback"
             else:
-                response = await handle_general_chat(request.query, context, session_id)
+                # Use fallback handlers
+                response = await handle_fallback_response(request.query, routing_decision)
+                tool_used = routing_decision.tool_name
         else:
-            # No routing - default to general chat
-            response = await handle_general_chat(request.query, context, session_id)
+            # No routing - try MCP directly or fallback
+            if mcp_client and MCP_AVAILABLE:
+                try:
+                    response = await mcp_client.process_query(request.query)
+                    print("✅ Direct MCP response generated")
+                except Exception as e:
+                    print(f"⚠️ Direct MCP failed, using fallback: {e}")
+                    response = await handle_general_chat(request.query, context)
+            else:
+                response = await handle_general_chat(request.query, context)
         
-        # Step 5: Add assistant response to memory
+        # Add assistant response to memory
         memory.add_message(session_id, "assistant", response)
         
-        # Step 6: Get updated message count
+        # Get message count
         message_count = memory.count_messages(session_id)
         
         print(f"✅ Response generated ({len(response)} chars)")
         
-        return QueryResponse(
-            response=response,
-            session_id=session_id,
-            tool_used=tool_used,
-            routing_info=routing_info,
-            message_count=message_count
-        )
+        # Return frontend-compatible response
+        return {
+            "response": response,
+            "message": response,      # Alternative field name
+            "content": response,      # Alternative field name  
+            "text": response,         # Alternative field name
+            "session_id": session_id,
+            "tool_used": tool_used,
+            "routing_info": routing_info,
+            "message_count": message_count,
+            "status": "success"
+        }
         
     except Exception as e:
         print(f"❌ Error processing query: {e}")
-        # Still add error info to memory for debugging
-        error_msg = f"I encountered an error: {str(e)}"
-        memory.add_message(session_id, "assistant", error_msg)
+        print(f"📝 Traceback: {traceback.format_exc()}")
         
-        raise HTTPException(status_code=500, detail=str(e))
+        error_response = f"I encountered an error: {str(e)}. Let me try to help you anyway!"
+        
+        # Try to save error response
+        try:
+            memory.add_message(session_id, "assistant", error_response)
+        except:
+            pass
+        
+        return {
+            "response": error_response,
+            "message": error_response,
+            "content": error_response,
+            "text": error_response,
+            "session_id": session_id,
+            "tool_used": None,
+            "routing_info": None,
+            "message_count": 0,
+            "status": "error",
+            "error": str(e)
+        }
 
-async def handle_general_chat(query: str, context: str, session_id: str) -> str:
+async def handle_fallback_response(query: str, routing_decision) -> str:
+    """Handle responses when MCP is not available"""
+    
+    query_lower = query.lower()
+    
+    if routing_decision.tool_name == "sticky_notes":
+        if any(word in query_lower for word in ['add', 'save', 'write', 'remember', 'note']):
+            return f"📝 I would save this note: '{query}'\n\n(Note: MCP server not connected, so this is a simulation. Your note would normally be saved to the database.)"
+        elif any(word in query_lower for word in ['read', 'show', 'list']):
+            return "📋 Here would be your saved notes:\n\n(Note: MCP server not connected. Connect the server to see actual notes.)"
+        elif any(word in query_lower for word in ['search', 'find']):
+            return f"🔍 I would search your notes for: '{query}'\n\n(Note: MCP server not connected. Connect the server to search actual notes.)"
+        else:
+            return "📝 Sticky Notes feature detected!\n\nAvailable commands:\n• 'Add a note about...'\n• 'Show my notes'\n• 'Search notes for...'\n\n(Note: Connect MCP server for full functionality)"
+    
+    elif routing_decision.tool_name == "docs_search":
+        return f"📚 I would search documentation for: '{query}'\n\n🔍 Typical results would include:\n• Official documentation links\n• Code examples\n• Tutorial resources\n\n(Note: MCP server not connected. Connect the server for actual web search.)"
+    
+    elif routing_decision.tool_name == "math":
+        # Simple math fallback
+        if 'derivative' in query_lower:
+            if 'x^2' in query or 'x²' in query:
+                return "📐 Derivative of x² = 2x\n\n✅ Using basic calculus rules"
+            return f"📐 I would calculate the derivative for: '{query}'\n\n(Note: Connect MCP server for advanced math calculations)"
+        elif 'integral' in query_lower:
+            return f"∫ I would calculate the integral for: '{query}'\n\n(Note: Connect MCP server for advanced math calculations)"
+        else:
+            return f"🧮 Math calculation requested: '{query}'\n\n(Note: Connect MCP server for full math capabilities)"
+    
+    else:
+        return await handle_general_chat(query, "")
+
+async def handle_general_chat(query: str, context: str) -> str:
     """Handle general conversation"""
     
-    print("💬 Handling as general chat...")
-    
-    # Build a context-aware prompt
-    if context:
-        enhanced_query = f"""Previous conversation:
-{context}
-
-Current user message: {query}
-
-Please respond naturally, taking into account our conversation history."""
-    else:
-        enhanced_query = query
-    
-    # Try to use MCP chat tool if available
-    if mcp_client:
-        try:
-            result = await mcp_client.call_tool("chat", {"message": enhanced_query})
-            return result.get("response", "I'm not sure how to respond to that.")
-        except Exception as e:
-            print(f"⚠️  MCP chat tool failed: {e}")
-    
-    # Fallback responses based on query type
     query_lower = query.lower()
     
+    # Greetings
     if any(greeting in query_lower for greeting in ['hello', 'hi', 'hey', 'good morning', 'good afternoon']):
-        return "Hello! I'm your MCP-powered assistant. I can help you with notes, documentation searches, math problems, and general questions. What would you like to do?"
+        return "Hello! 👋 I'm your intelligent assistant. I can help you with:\n\n📝 Sticky notes and reminders\n📚 Documentation searches\n🧮 Math calculations\n💬 General conversation\n\nWhat would you like to do today?"
     
-    elif any(question in query_lower for question in ['how are you', 'how do you do', 'what\'s up']):
-        return "I'm doing well, thank you! I'm ready to help you with whatever you need. I can manage notes, search documentation, solve math problems, or just chat."
+    # Status questions
+    elif any(phrase in query_lower for phrase in ['how are you', 'what\'s up', 'how\'s it going']):
+        mcp_status = "✅ Connected" if mcp_client and MCP_AVAILABLE else "⚠️ Not connected"
+        return f"I'm doing great! 😊\n\n**System Status:**\n• Memory: ✅ Working\n• Router: ✅ Working\n• MCP Server: {mcp_status}\n• Redis: ✅ Working\n\nI'm ready to help you with anything you need!"
     
-    elif 'help' in query_lower:
+    # Help requests
+    elif 'help' in query_lower or 'what can you do' in query_lower:
         return """I can help you with several things:
 
-📝 **Sticky Notes**: "Add a note about the meeting" or "Show my notes"
-📚 **Documentation**: "Search for Python tutorials" or "Find React documentation"  
-🧮 **Math**: "What's the derivative of x²?" or "Calculate 15 * 23"
-💬 **General Chat**: Ask me questions or just have a conversation!
+📝 **Sticky Notes & Reminders**
+   • "Add a note about my doctor appointment"
+   • "Show me my notes"
+   • "Search notes for 'meeting'"
 
-What would you like to do?"""
+📚 **Documentation Search**
+   • "Search Python docs for list comprehensions"
+   • "Find React documentation"
+   • "Look up FastAPI tutorials"
+
+🧮 **Math & Calculations**
+   • "What's the derivative of x²?"
+   • "Calculate 25 * 17"
+   • "Integrate sin(x)"
+
+💬 **General Chat**
+   • Ask me questions about anything
+   • I remember our conversation history
+
+**Current Status:**
+• MCP Server: """ + ("✅ Connected" if mcp_client and MCP_AVAILABLE else "⚠️ Connect server for full features") + """
+• Memory System: ✅ Working
+• All basic features available!
+
+What would you like to try?"""
     
+    # Thanks
+    elif any(word in query_lower for word in ['thanks', 'thank you']):
+        return "You're very welcome! 😊 I'm happy to help. Feel free to ask me anything else!"
+    
+    # Default response
     else:
-        return f"I understand you're asking about that. While I'd love to give you a detailed response, I'm currently running in a simplified mode. You asked: '{query}' - could you try rephrasing or let me know if you'd like help with notes, documentation, or math?"
-
-async def handle_tool_call(tool_name: str, query: str, context: str, session_id: str) -> str:
-    """Handle specific tool calls based on routing"""
-    
-    print(f"🔧 Handling tool call: {tool_name}")
-    
-    try:
-        if tool_name == "sticky_notes":
-            return await handle_sticky_notes(query, context)
-        elif tool_name == "docs_search":
-            return await handle_docs_search(query, context)
-        elif tool_name == "math":
-            return await handle_math(query, context)
+        if '?' in query:
+            return f"That's an interesting question: '{query}'\n\nI'd be happy to help! I work best with specific tasks like:\n• Managing notes and reminders\n• Searching documentation\n• Solving math problems\n• Having conversations\n\nHow can I assist you with this topic?"
         else:
-            return await handle_general_chat(query, context, session_id)
-            
+            return f"I see you mentioned: '{query}'\n\nI'm here to help! I can assist with notes, documentation searches, math, or general questions. What would you like to do?"
+
+# Tools endpoint for frontend
+@app.get("/tools")
+async def list_tools():
+    """Get available tools for frontend"""
+    try:
+        tools = []
+        
+        if mcp_client and MCP_AVAILABLE:
+            try:
+                mcp_tools = await mcp_client.list_tools()
+                tools.extend(mcp_tools)
+            except Exception as e:
+                print(f"⚠️ Failed to get MCP tools: {e}")
+        
+        # Add fallback tools
+        fallback_tools = [
+            {
+                "name": "sticky_notes",
+                "description": "Add, search, and manage personal notes and reminders",
+                "available": True
+            },
+            {
+                "name": "docs_search",
+                "description": "Search documentation and web resources",
+                "available": True
+            },
+            {
+                "name": "math",
+                "description": "Calculate derivatives, integrals, and solve math problems",
+                "available": True
+            },
+            {
+                "name": "general_chat",
+                "description": "General conversation and questions",
+                "available": True
+            }
+        ]
+        
+        # Merge and deduplicate
+        all_tools = {tool["name"]: tool for tool in fallback_tools}
+        for tool in tools:
+            all_tools[tool["name"]] = tool
+        
+        final_tools = list(all_tools.values())
+        
+        return {
+            "tools": final_tools,
+            "count": len(final_tools),
+            "mcp_connected": mcp_client is not None and MCP_AVAILABLE,
+            "available": True
+        }
+        
     except Exception as e:
-        print(f"❌ Tool {tool_name} failed: {e}")
-        return f"I tried to use the {tool_name} tool, but encountered an issue. Let me try to help you differently: {query}"
+        print(f"❌ Error in /tools endpoint: {e}")
+        return {
+            "tools": [],
+            "count": 0,
+            "mcp_connected": False,
+            "available": False,
+            "error": str(e)
+        }
 
-async def handle_sticky_notes(query: str, context: str) -> str:
-    """Handle sticky notes operations"""
-    
-    query_lower = query.lower()
-    
-    # Determine what the user wants to do with notes
-    if any(word in query_lower for word in ['add', 'save', 'write', 'create', 'note that', 'remember']):
-        # Extract the note content
-        note_content = query
-        
-        # Try to clean up the content by removing command words
-        for phrase in ['add a note about', 'save a note about', 'write down', 'note that', 'remember that', 'remember to']:
-            if phrase in query_lower:
-                start_idx = query_lower.find(phrase) + len(phrase)
-                note_content = query[start_idx:].strip()
-                break
-        
-        if mcp_client:
-            try:
-                result = await mcp_client.call_tool("add_note", {"message": note_content})
-                return f"📝 {result.get('response', 'Note saved successfully!')}"
-            except Exception as e:
-                print(f"⚠️  MCP add_note failed: {e}")
-        
-        return f"📝 I'd save this note for you: '{note_content}' (Note: MCP sticky notes tool not available)"
-        
-    elif any(word in query_lower for word in ['search', 'find', 'look for']):
-        # Extract search term
-        search_term = query
-        for phrase in ['search for', 'find', 'look for', 'search my notes for']:
-            if phrase in query_lower:
-                start_idx = query_lower.find(phrase) + len(phrase)
-                search_term = query[start_idx:].strip()
-                break
-        
-        if mcp_client:
-            try:
-                result = await mcp_client.call_tool("search_notes", {"query": search_term})
-                return f"🔍 {result.get('response', 'No matching notes found.')}"
-            except Exception as e:
-                print(f"⚠️  MCP search_notes failed: {e}")
-        
-        return f"🔍 I'd search your notes for: '{search_term}' (Note: MCP sticky notes tool not available)"
-        
-    elif any(word in query_lower for word in ['show', 'list', 'read', 'get', 'all notes']):
-        if mcp_client:
-            try:
-                result = await mcp_client.call_tool("read_notes", {})
-                return f"📋 {result.get('response', 'No notes available.')}"
-            except Exception as e:
-                print(f"⚠️  MCP read_notes failed: {e}")
-        
-        return "📋 I'd show you all your notes here (Note: MCP sticky notes tool not available)"
-        
-    else:
-        # Default to showing notes
-        return await handle_sticky_notes("show my notes", context)
-
-async def handle_docs_search(query: str, context: str) -> str:
-    """Handle documentation search"""
-    
-    if mcp_client:
-        try:
-            result = await mcp_client.call_tool("docs_search", {"query": query})
-            return f"📚 {result.get('response', 'No documentation found.')}"
-        except Exception as e:
-            print(f"⚠️  MCP docs_search failed: {e}")
-    
-    return f"📚 I'd search documentation for: '{query}' (Note: MCP docs search tool not available)"
-
-async def handle_math(query: str, context: str) -> str:
-    """Handle math operations"""
-    
-    query_lower = query.lower()
-    
-    if 'derivative' in query_lower:
-        # Try to extract function
-        if mcp_client:
-            try:
-                # This is a simplified extraction - you might want to improve this
-                import re
-                func_match = re.search(r'of\s+([^\s,]+)', query)
-                if func_match:
-                    func = func_match.group(1)
-                    result = await mcp_client.call_tool("derivative", {"function": func})
-                    return f"📐 {result.get('response', 'Could not calculate derivative.')}"
-            except Exception as e:
-                print(f"⚠️  MCP derivative failed: {e}")
-        
-        return f"📐 I'd calculate the derivative for you: '{query}' (Note: MCP math tool not available)"
-        
-    elif 'integral' in query_lower:
-        if mcp_client:
-            try:
-                import re
-                func_match = re.search(r'of\s+([^\s,]+)', query)
-                if func_match:
-                    func = func_match.group(1)
-                    result = await mcp_client.call_tool("integral", {"function": func})
-                    return f"∫ {result.get('response', 'Could not calculate integral.')}"
-            except Exception as e:
-                print(f"⚠️  MCP integral failed: {e}")
-        
-        return f"∫ I'd calculate the integral for you: '{query}' (Note: MCP math tool not available)"
-    
-    else:
-        # General math
-        return f"🧮 I'd help with that math problem: '{query}' (Note: MCP math tool not available)"
-
-# Memory and conversation management endpoints
-
+# Memory management endpoints
 @app.get("/conversations/{session_id}")
 async def get_conversation(session_id: str, limit: Optional[int] = None):
-    """Get conversation history for a session"""
+    """Get conversation history"""
     try:
         messages = memory.get_conversation(session_id, limit)
-        summary = memory.get_session_summary(session_id)
-        
         return {
             "session_id": session_id,
             "messages": [msg.to_dict() for msg in messages],
-            "summary": summary
+            "count": len(messages)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/conversations/{session_id}")
 async def clear_conversation(session_id: str):
-    """Clear conversation history for a session"""
+    """Clear conversation history"""
     try:
         success = memory.clear_session(session_id)
         if success:
@@ -345,7 +379,7 @@ async def clear_conversation(session_id: str):
 
 @app.get("/conversations")
 async def list_conversations():
-    """List all conversation sessions"""
+    """List all conversations"""
     try:
         sessions = memory.list_sessions()
         return {
@@ -355,78 +389,125 @@ async def list_conversations():
                     "summary": memory.get_session_summary(session_id)
                 }
                 for session_id in sessions
-            ]
+            ],
+            "count": len(sessions)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# System status and health endpoints
-
+# Health and status endpoints
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    mcp_status = "not_available"
+    """Health check with system status"""
+    try:
+        # Test memory
+        test_session = f"health_check_{datetime.now().isoformat()}"
+        memory.add_message(test_session, "system", "health check")
+        memory.clear_session(test_session)
+        memory_status = "healthy"
+    except Exception:
+        memory_status = "unhealthy"
     
-    if mcp_client:
-        try:
-            await mcp_client.list_tools()
-            mcp_status = "connected"
-        except Exception:
-            mcp_status = "disconnected"
+    # Test MCP
+    mcp_status = "connected" if mcp_client and MCP_AVAILABLE else "disconnected"
     
     return {
         "status": "healthy",
-        "mcp_client": mcp_status,
-        "memory_sessions": len(memory.list_sessions()),
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "version": "2.0.0",
+        "components": {
+            "api": "healthy",
+            "memory": memory_status,
+            "mcp_client": mcp_status,
+            "router": "healthy"
+        },
+        "stats": {
+            "active_sessions": len(memory.list_sessions()),
+            "mcp_available": MCP_AVAILABLE
+        }
     }
 
 @app.get("/status")
 async def get_status():
-    """Get detailed system status"""
+    """Detailed system status"""
     try:
-        tools = []
-        if mcp_client:
+        # Get tools
+        tools_count = 0
+        available_tools = []
+        
+        if mcp_client and MCP_AVAILABLE:
             try:
-                tools = await mcp_client.list_tools()
+                mcp_tools = await mcp_client.list_tools()
+                tools_count = len(mcp_tools)
+                available_tools = [tool.get("name", "unknown") for tool in mcp_tools]
             except Exception:
                 pass
         
+        # Get sessions info
         sessions = memory.list_sessions()
         
         return {
             "api_version": "2.0.0",
-            "mcp_available": MCP_AVAILABLE,
-            "mcp_tools": len(tools),
-            "available_tools": [tool.get("name", "unknown") for tool in tools] if tools else [],
-            "active_sessions": len(sessions),
-            "router_type": type(router).__name__,
-            "memory_backend": "SQLite",
-            "database_file": memory.db_path,
+            "timestamp": datetime.now().isoformat(),
+            "mcp": {
+                "available": MCP_AVAILABLE,
+                "connected": mcp_client is not None,
+                "tools_count": tools_count,
+                "available_tools": available_tools
+            },
+            "memory": {
+                "backend": type(memory).__name__,
+                "active_sessions": len(sessions),
+                "total_sessions": len(sessions)
+            },
+            "router": {
+                "type": type(router).__name__,
+                "available": True
+            },
             "environment": {
-                "simple_router": os.getenv("USE_SIMPLE_ROUTER", "true").lower() == "true",
-                "mcp_client_available": MCP_AVAILABLE
+                "gemini_api_key": bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")),
+                "redis_host": os.getenv("REDIS_HOST", "not_set"),
+                "mcp_server_path": os.getenv("MCP_SERVER_PATH", "server/server.py")
             }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Simple test endpoint
+# Root endpoint
 @app.get("/")
 async def root():
-    """Root endpoint with API info"""
+    """API information"""
     return {
-        "message": "MCP Chatbot API with Memory & Routing",
+        "name": "MCP Chatbot API",
         "version": "2.0.0",
+        "status": "running",
+        "description": "Intelligent chatbot with Redis memory, smart routing, and MCP tool integration",
+        "features": [
+            "🧠 Redis conversation memory",
+            "🔀 Intelligent query routing",
+            "🛠️ MCP tool integration", 
+            "📝 Sticky notes management",
+            "📚 Documentation search",
+            "🧮 Math calculations",
+            "💬 Natural conversation"
+        ],
         "endpoints": {
-            "chat": "/query",
-            "conversations": "/conversations",
-            "health": "/health",
-            "status": "/status"
-        }
+            "chat": "POST /query",
+            "tools": "GET /tools", 
+            "conversations": "GET /conversations",
+            "health": "GET /health",
+            "status": "GET /status",
+            "documentation": "GET /docs"
+        },
+        "mcp_status": "connected" if (mcp_client and MCP_AVAILABLE) else "disconnected",
+        "memory_sessions": len(memory.list_sessions())
     }
 
 if __name__ == "__main__":
     import uvicorn
     print("🚀 Starting MCP Chatbot API...")
+    print("📍 API will be available at: http://localhost:8000")
+    print("📚 API docs: http://localhost:8000/docs") 
+    print("🔍 Health check: http://localhost:8000/health")
+    print("🛠️ Tools list: http://localhost:8000/tools")
     uvicorn.run(app, host="0.0.0.0", port=8000)

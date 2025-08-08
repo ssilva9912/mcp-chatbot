@@ -1,0 +1,13 @@
+Model: gemini-2.0-flash-exp
+Tool: general_chat
+Args: {
+  "query": "how to make a caesar salad"
+}
+Raw Result: meta=None content=[TextContent(type='text', text="I'd like to help you with 'how to make a caesar salad', but I need to be connected to a conversational AI service to handle general questions. For now, I can help you with:\n\n• Managing notes (add_note, read_notes, search_notes)\n• Mathematical calculations (simple_math)\n• Searching documentation (get_docs)\n\nWould you like to use any of these tools instead?", annotations=None)] isError=False
+Extracted Content: I'd like to help you with 'how to make a caesar salad', but I need to be connected to a conversational AI service to handle general questions. For now, I can help you with:
+
+• Managing notes (add_note, read_notes, search_notes)
+• Mathematical calculations (simple_math)
+• Searching documentation (get_docs)
+
+Would you like to use any of these tools instead?

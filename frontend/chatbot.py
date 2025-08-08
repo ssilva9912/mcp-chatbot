@@ -33,6 +33,11 @@ class Chatbot:
 
         elif message["role"] == "assistant":
             with st.chat_message("assistant"):
+                # Show tool info if available
+                if message.get("tool_used"):
+                    st.info(f"🔧 Used tool: **{message['tool_used']}**")
+                
+                # Display main content
                 if isinstance(message["content"], str):
                     st.markdown(message["content"])
                 elif isinstance(message["content"], list):
@@ -47,6 +52,14 @@ class Chatbot:
                                     st.json(content["args"])
                         else:
                             st.markdown(str(content))
+                
+                # Show status indicators
+                if message.get("rate_limited"):
+                    st.warning("🚫 Response was rate limited")
+                elif message.get("fallback_used"):
+                    st.info("ℹ️ Used fallback response")
+                elif message.get("status") == "error":
+                    st.error("❌ Response had errors")
 
     async def get_tools(self):
         """Fetch available tools from the API"""
@@ -80,7 +93,11 @@ class Chatbot:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{self.api_url}/query",
-                    json={"query": query},
+                    json={
+                        "query": query,
+                        "session_id": st.session_state.get("session_id", None),
+                        "use_routing": True
+                    },
                     headers={"Content-Type": "application/json"},
                 )
                 if response.status_code == 200:
@@ -102,6 +119,11 @@ class Chatbot:
         """Main render function for the Streamlit app"""
         st.title("🤖 MCP Chatbot Client")
 
+        # Initialize session ID if not exists
+        if "session_id" not in st.session_state:
+            import uuid
+            st.session_state["session_id"] = str(uuid.uuid4())
+
         # Sidebar with API status and tools
         with st.sidebar:
             st.subheader("🔧 Connection Status")
@@ -109,10 +131,19 @@ class Chatbot:
             # Check API health
             with st.spinner("Checking API status..."):
                 health_status = await self.check_health()
-            
+                st.json(health_status)
+
             if health_status.get("status") == "healthy":
                 st.success("✅ API Connected")
-                st.write(f"Tools available: {health_status.get('tools_available', 'Unknown')}")
+                
+                # Show additional health info if available
+                if "components" in health_status:
+                    components = health_status["components"]
+                    st.write("**Components:**")
+                    for comp, status in components.items():
+                        icon = "✅" if status in ("healthy", "connected") else "❌"
+                        st.write(f"• {comp}: {icon}")
+                        
             else:
                 st.error("❌ API Disconnected")
                 st.write(f"Error: {health_status.get('error', 'Unknown error')}")
@@ -130,11 +161,20 @@ class Chatbot:
                     for tool in tools:
                         with st.expander(f"🔧 {tool['name']}"):
                             st.write(tool.get('description', 'No description available'))
+                            if tool.get('available'):
+                                st.success("Available ✅")
+                            else:
+                                st.warning("Not available ⚠️")
                 else:
                     st.write("No tools available")
                     
             except Exception as e:
                 st.error(f"Failed to load tools: {str(e)}")
+
+            # Session info
+            st.subheader("📊 Session Info")
+            st.write(f"Session: `{st.session_state['session_id'][:8]}...`")
+            st.write(f"Messages: {len(st.session_state['messages'])}")
 
             # Clear chat button
             if st.button("🗑️ Clear Chat"):
@@ -159,25 +199,64 @@ class Chatbot:
                 try:
                     response_data = await self.send_query(query)
                     
+                    # Debug info (only show in development)
+                    if st.get_option("runner.magicEnabled"):
+                        with st.expander("🔍 Debug: API Response", expanded=False):
+                            st.json(response_data)
+                    
+                    # Handle both API response formats
                     if "messages" in response_data:
-                        # Replace the entire message history with the API response
-                        # (skip the first message as it's the user message we just added)
+                        # New format: API returns full conversation history
                         api_messages = response_data["messages"]
-                        if len(api_messages) > 1:
-                            # Add only the new messages (assistant responses and tool results)
-                            new_messages = api_messages[1:]  # Skip the user message
-                            st.session_state["messages"].extend(new_messages)
-                            
-                            # Display new messages
-                            for message in new_messages:
-                                self.display_message(message)
-                    else:
-                        st.error("Unexpected response format from API")
+                        st.session_state["messages"] = api_messages
                         
+                        # Display only the latest assistant message
+                        if api_messages and api_messages[-1]["role"] == "assistant":
+                            self.display_message(api_messages[-1])
+                            
+                    else:
+                        # Current format: API returns single response fields
+                        response_content = (
+                            response_data.get("response") or 
+                            response_data.get("message") or 
+                            response_data.get("content") or 
+                            response_data.get("text") or
+                            "No response received"
+                        )
+                        
+                        assistant_message = {
+                            "role": "assistant",
+                            "content": response_content,
+                            "tool_used": response_data.get("tool_used"),
+                            "status": response_data.get("status", "success"),
+                            "rate_limited": response_data.get("rate_limited", False),
+                            "fallback_used": response_data.get("fallback_used", False),
+                            "session_id": response_data.get("session_id")
+                        }
+                        
+                        st.session_state["messages"].append(assistant_message)
+                        self.display_message(assistant_message)
+                        
+                        # Update session ID if provided by API
+                        if response_data.get("session_id"):
+                            st.session_state["session_id"] = response_data["session_id"]
+                        
+                        # Show global status indicators
+                        if response_data.get("rate_limited"):
+                            st.warning("🚫 API is currently rate limited")
+                        elif response_data.get("fallback_used"):
+                            st.info("ℹ️ Using fallback response (limited functionality)")
+                        elif response_data.get("status") == "error":
+                            st.error(f"❌ API Error: {response_data.get('error', 'Unknown error')}")
+                            
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
                     # Add error message to chat
-                    error_message = {"role": "assistant", "content": f"Sorry, I encountered an error: {str(e)}"}
+                    error_message = {
+                        "role": "assistant", 
+                        "content": f"Sorry, I encountered an error: {str(e)}",
+                        "status": "error"
+                    }
                     st.session_state["messages"].append(error_message)
                     self.display_message(error_message)
             
