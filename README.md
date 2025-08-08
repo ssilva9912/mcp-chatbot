@@ -247,15 +247,6 @@ USE_SIMPLE_ROUTER=true  # Basic routing
 USE_SIMPLE_ROUTER=false # LLM-based routing
 ```
 
----
-
-## License
-
-MIT
-
----
-
-MCP Chatbot – Built for intelligent conversations
 
 
 
