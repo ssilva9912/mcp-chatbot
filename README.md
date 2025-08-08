@@ -69,18 +69,6 @@ USE_SIMPLE_ROUTER=true
 
 ---
 
-### Start Redis
-
-```bash
-# Using Docker (recommended)
-docker run -d --name redis -p 6379:6379 redis:alpine
-
-# Or install locally and start
-redis-server
-```
-
----
-
 ### Launch the Application
 
 **Terminal 1 – Start MCP Server:**
@@ -116,23 +104,28 @@ streamlit run main.py
 ## Project Structure
 
 ```
-mcp-chatbot/
+mcp-client/
 ├── api/
 │   ├── main.py
 │   ├── mcp_client.py
+|   ├── .env
+|   ├── utils/
+|       └── __init__.py
+|       └── simple_router.py
+|       └── logger.py
 │   └── memory/
 │       └── redis_memory.py
+|       └── Redis_test.py
+|       └── sqlite_memory.py
+|
 ├── server/
 │   └── server.py
-├── utils/
-│   └── simple_router.py
-├── chatbot.py
-├── main.py
-├── debug/
-│   └── debug_redis.py
-│   └── focused_debug.py
+├── frontend/
+|   └──chatbot.py
+|   └──main.py
+|
+├── script.py
 ├── requirements.txt
-├── .env.example
 └── README.md
 ```
 
@@ -263,6 +256,7 @@ MIT
 ---
 
 MCP Chatbot – Built for intelligent conversations
+
 
 
 
