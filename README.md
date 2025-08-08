@@ -1,20 +1,20 @@
-# MCP Chatbot v1.0
+# 🤖 MCP Chatbot v1.0
 
 An intelligent conversational AI system built with **FastAPI**, **Streamlit**, and **Google Gemini**, featuring Redis-based memory, smart routing, and extensible MCP (Model Context Protocol) tool integration.
 
-## Features
+## ✨ Features
 
-- **Redis Memory System** - Persistent conversation history across sessions
-- **Intelligent Query Routing** - Automatic tool selection based on user intent  
-- **MCP Tool Integration** - Extensible protocol for adding custom tools
-- **Note Management** - Add, search, and organize personal notes
-- **Documentation Search** - Search official docs from multiple libraries
-- **Math Calculations** - Safe mathematical expression evaluation
-- **Natural Conversations** - Direct Gemini integration for general chat
-- **Modern Web UI** - Clean Streamlit interface with real-time updates
-- **Production Ready** - Comprehensive error handling and monitoring
+- 🧠 **Redis Memory System** - Persistent conversation history across sessions
+- 🔀 **Intelligent Query Routing** - Automatic tool selection based on user intent  
+- 🛠️ **MCP Tool Integration** - Extensible protocol for adding custom tools
+- 📝 **Note Management** - Add, search, and organize personal notes
+- 📚 **Documentation Search** - Search official docs from multiple libraries
+- 🧮 **Math Calculations** - Safe mathematical expression evaluation
+- 💬 **Natural Conversations** - Direct Gemini integration for general chat
+- 🌐 **Modern Web UI** - Clean Streamlit interface with real-time updates
+- ⚡ **Production Ready** - Comprehensive error handling and monitoring
 
-## Architecture
+## 🏗️ Architecture
 
 ```mermaid
 graph TB
@@ -29,7 +29,7 @@ graph TB
     E --> I
 ```
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 
@@ -42,7 +42,7 @@ graph TB
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/ssilva9912/mcp-chatbot.git
 cd mcp-chatbot
 
 # Create virtual environment
@@ -127,52 +127,51 @@ streamlit run main.py
 - **API Documentation**: http://localhost:8000/docs
 - **Health Check**: http://localhost:8000/health
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 mcp-chatbot/
 ├── api/                          # FastAPI backend
 │   ├── main.py                   # Main FastAPI application
 │   ├── mcp_client.py             # MCP client for Gemini integration
-│   └── conversations/
+│   └── memory/
 │       └── redis_memory.py       # Redis memory management
 ├── server/                       # MCP protocol server
 │   └── server.py                 # Tool implementations
 ├── utils/
 │   └── simple_router.py          # Query routing logic
-├── frontend/                     # Streamlit application
-│   ├── chatbot.py               # Main chatbot interface
-│   └── main.py                  # Streamlit entry point
-├── debug/                       # Debugging utilities
+├── chatbot.py                    # Main chatbot interface
+├── main.py                       # Streamlit entry point
+├── debug/                        # Debugging utilities
 │   ├── debug_redis.py           # Redis connection testing
 │   └── focused_debug.py         # MCP connection diagnostics
-├── requirements.txt             # Python dependencies
-├── .env.example                 # Environment template
-└── README.md                    # This file
+├── requirements.txt              # Python dependencies
+├── .env.example                  # Environment template
+└── README.md                     # This file
 ```
 
-## Available Tools
+## 🛠️ Available Tools
 
-### Note Management
+### 📝 Note Management
 - **add_note**: Save personal notes and reminders
 - **read_notes**: View all saved notes
 - **search_notes**: Find notes by content
 
-### Documentation Search  
+### 📚 Documentation Search  
 - **get_docs**: Search official documentation
   - Supported: LangChain, OpenAI, LlamaIndex, Anthropic, HuggingFace, PyTorch, TensorFlow
   - Uses Serper API for web search
 
-### Mathematics
+### 🧮 Mathematics
 - **simple_math**: Safe mathematical expression evaluation
   - Basic arithmetic, parentheses, common functions
   - Security: No eval() vulnerabilities
 
-### General Chat
+### 💬 General Chat
 - **general_chat**: Natural conversations with Gemini
 - Automatic fallback for unrecognized queries
 
-##  Usage Examples
+## 💡 Usage Examples
 
 ### Basic Conversations
 ```
@@ -183,10 +182,10 @@ Bot: "Hi! I'd be happy to help you make a delicious Caesar salad! Here's a class
 ### Note Management
 ```
 You: "Add a note about my doctor appointment tomorrow at 3pm"
-Bot: "Successfully saved note #1: 'doctor appointment tomorrow at 3pm'"
+Bot: "📝 Successfully saved note #1: 'doctor appointment tomorrow at 3pm'"
 
 You: "Show me my notes"
-Bot: "Your saved notes (1 total): #1: doctor appointment tomorrow at 3pm"
+Bot: "📋 Your saved notes (1 total): #1: doctor appointment tomorrow at 3pm"
 ```
 
 ### Documentation Search
@@ -199,7 +198,7 @@ Bot: "🔧 Used tool: docs_search"
 ### Math Calculations
 ```
 You: "What's 25 * 17 + 33?"
-Bot: "25 * 17 + 33 = 458"
+Bot: "🧮 25 * 17 + 33 = 458"
 ```
 
 ## 🔧 API Endpoints
@@ -337,8 +336,23 @@ Access `http://localhost:8000/status` for detailed system information:
 ### Logging
 - **FastAPI logs**: Console output with emoji indicators
 - **MCP Client logs**: Saved to `tool_results/` directory
-- **Error tracking**: Full stack traces 
+- **Error tracking**: Full stack traces in production
 
+## 🚀 Production Deployment
+
+### Docker Deployment
+```dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000 8501
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
 
 ### Environment Variables for Production
 ```env
@@ -347,5 +361,52 @@ REDIS_HOST=your-redis-host
 GEMINI_API_KEY=your-production-key
 SESSION_EXPIRY_DAYS=7
 ```
-#   m c p - c h a t b o t  
+
+### Load Balancing
+The system supports horizontal scaling with Redis as shared state storage.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+### Development Setup
+```bash
+# Install development dependencies
+pip install pytest pytest-asyncio black flake8
+
+# Run tests
+pytest
+
+# Format code
+black .
+flake8 .
+```
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern web framework
+- [Streamlit](https://streamlit.io/) - Rapid UI development
+- [Google Gemini](https://ai.google.dev/) - Conversational AI
+- [Redis](https://redis.io/) - In-memory data structure store
+- [MCP Protocol](https://modelcontextprotocol.io/) - Tool integration standard
+
+## 📧 Support
+
+For support, issues, or feature requests:
+- Create an issue on [GitHub Issues](https://github.com/ssilva9912/mcp-chatbot/issues)
+- Check the [troubleshooting guide](#-testing--debugging)
+- Review the [API documentation](http://localhost:8000/docs)
+
+---
+
+**MCP Chatbot v1.0** - Built with ❤️ for intelligent conversations
+ 
  
