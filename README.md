@@ -347,3 +347,5 @@ REDIS_HOST=your-redis-host
 GEMINI_API_KEY=your-production-key
 SESSION_EXPIRY_DAYS=7
 ```
+#   m c p - c h a t b o t  
+ 
