@@ -1,4 +1,26 @@
-# MCP Chatbot v1.0
+# MCP Chatbot v2.0.1
+---
+
+## New in v2.0.1
+
+### Core Additions
+- `session_manager.py`: Automatic session expiration and cleanup
+- `prompt_parser.py`: Multi-task detection and complexity scoring
+- `chat_handler.py`: Unified coordination for tools and chat
+
+### Enhancements
+- Dual routing support in `api/main.py` (legacy + enhanced)
+- Improved error handling and graceful tool fallback
+- Multi-task request handling with priority system
+- Session control commands: `close session`, `end chat`
+
+### Frontend Updates
+- Fixed rerun behavior in `frontend/chatbot.py` (now uses `st.rerun()`)
+
+### Technical Improvements
+- Background session cleanup job (5-minute interval)
+- 30-minute auto-expiration for inactive sessions
+- Improved logging, memory tracking, and tool execution history
 
 An intelligent conversational AI system built with FastAPI, Streamlit, and Google Gemini, featuring Redis-based memory, smart routing, and extensible MCP (Model Context Protocol) tool integration.
 
@@ -111,6 +133,9 @@ mcp-client/
 |   ├── .env
 |   ├── utils/
 |       └── __init__.py
+|       └── chat_handler.py
+|       └── session_manager.py
+|       └── propmpt_parser.py
 |       └── simple_router.py
 |       └── logger.py
 │   └── memory/
@@ -246,6 +271,7 @@ Set in `.env`:
 USE_SIMPLE_ROUTER=true  # Basic routing
 USE_SIMPLE_ROUTER=false # LLM-based routing
 ```
+
 
 
 
